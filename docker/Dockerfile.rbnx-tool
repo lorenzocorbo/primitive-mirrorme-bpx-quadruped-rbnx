@@ -1,0 +1,20 @@
+ARG RUST_IMAGE=rust:1.91.0-bookworm@sha256:e187887ec511b3d93e45c0231d2f0fd59f1347526c58aa86343aa83c74f3e1a9
+FROM ${RUST_IMAGE}
+
+ARG GRPCIO_VERSION=1.80.0
+ARG GRPCIO_TOOLS_VERSION=1.76.0
+ARG PROTOBUF_VERSION=6.33.6
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Versions follow the fixed Robonix uv.lock used by the integration baseline.
+RUN python3 -m pip install \
+      --break-system-packages \
+      --no-cache-dir \
+      --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+      "grpcio==${GRPCIO_VERSION}" \
+      "grpcio-tools==${GRPCIO_TOOLS_VERSION}" \
+      "protobuf==${PROTOBUF_VERSION}" \
+    && python3 -c "import grpc_tools.protoc"

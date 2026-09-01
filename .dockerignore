@@ -1,0 +1,8 @@
+.git
+.artifacts
+rbnx-build
+logs
+third_party
+sdk/*.whl
+**/__pycache__
+**/*.pyc

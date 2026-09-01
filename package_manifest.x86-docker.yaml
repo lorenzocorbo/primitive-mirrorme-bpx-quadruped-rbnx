@@ -1,0 +1,19 @@
+manifestVersion: 1
+
+package:
+  name: robonix.primitive.mirrorme.bpx.quadruped
+  version: 0.1.0-dev.1
+  description: Read-only MirrorMe BPX state provider for x86_64 with a Dockerized ROS 2 Humble runtime.
+  tags: [primitive, quadruped, mirrorme, bpx, ros2, docker, x86-64, read-only]
+  maintainers:
+    - nonkr <nonkr@hotmail.com>
+  license: Apache-2.0
+
+build: bash scripts/build.sh
+start: bash scripts/start-sdk-read-only.sh
+stop: bash scripts/stop.sh
+
+capabilities:
+  - name: robonix/primitive/quadruped/odom
+
+depends: []

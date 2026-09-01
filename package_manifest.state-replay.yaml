@@ -1,0 +1,21 @@
+manifestVersion: 1
+
+package:
+  name: robonix.primitive.mirrorme.bpx.quadruped
+  version: 0.1.0-dev.1
+  description: Read-only normalized BPX state replay for offline Robonix integration tests.
+  tags: [primitive, quadruped, mirrorme, bpx, ros2, docker, read-only, replay]
+  maintainers:
+    - nonkr <nonkr@hotmail.com>
+  license: Apache-2.0
+
+build: bash scripts/build.sh
+start: bash scripts/start-state-replay.sh
+stop: bash scripts/stop.sh
+
+# Replay exercises the same RobotState seam as the SDK source but cannot
+# accept commands, so it declares exactly the SDK read-only capability surface.
+capabilities:
+  - name: robonix/primitive/quadruped/odom
+
+depends: []
