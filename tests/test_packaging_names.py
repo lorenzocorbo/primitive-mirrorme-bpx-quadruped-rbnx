@@ -30,6 +30,7 @@ class PackagingNamesTest(unittest.TestCase):
             "package_manifest.sdk-read-only.yaml",
             "package_manifest.state-replay.yaml",
             "package_manifest.motion-dev.yaml",
+            "package_manifest.posture-test.yaml",
         ):
             manifest = (PACKAGE_ROOT / filename).read_text(encoding="utf-8")
             self.assertIn("license: Apache-2.0", manifest)
@@ -46,25 +47,34 @@ class PackagingNamesTest(unittest.TestCase):
             self.assertIn("name: {}".format(PACKAGE_NAME), manifest)
             self.assertIn("mirrorme", manifest)
 
-    def test_release_manifests_have_one_read_only_capability_surface(self) -> None:
+    def test_release_manifests_publish_odom_and_posture_without_twist(self) -> None:
         for filename in (
             "package_manifest.yaml",
             "package_manifest.x86-docker.yaml",
+        ):
+            manifest = (PACKAGE_ROOT / filename).read_text(encoding="utf-8")
+            self.assertIn("name: {}".format(PACKAGE_NAME), manifest)
+            self.assertEqual(
+                2,
+                manifest.count("  - name: robonix/primitive/quadruped/"),
+            )
+            self.assertIn("  - name: robonix/primitive/quadruped/odom", manifest)
+            self.assertIn("  - name: robonix/primitive/quadruped/posture", manifest)
+            self.assertNotIn("robonix/primitive/quadruped/twist_in", manifest)
+            self.assertIn("start: bash scripts/start-sdk-posture.sh", manifest)
+
+        for filename in (
             "package_manifest.sdk-read-only.yaml",
             "package_manifest.state-replay.yaml",
         ):
             manifest = (PACKAGE_ROOT / filename).read_text(encoding="utf-8")
-            self.assertIn("name: {}".format(PACKAGE_NAME), manifest)
             self.assertIn("read-only", manifest)
             self.assertEqual(
                 1,
                 manifest.count("  - name: robonix/primitive/quadruped/"),
             )
             self.assertIn("  - name: robonix/primitive/quadruped/odom", manifest)
-
-        for filename in ("package_manifest.yaml", "package_manifest.x86-docker.yaml"):
-            manifest = (PACKAGE_ROOT / filename).read_text(encoding="utf-8")
-            self.assertIn("start: bash scripts/start-sdk-read-only.sh", manifest)
+            self.assertNotIn("robonix/primitive/quadruped/posture", manifest)
 
     def test_motion_development_manifest_has_a_distinct_fake_only_identity(self) -> None:
         path = PACKAGE_ROOT / "package_manifest.motion-dev.yaml"
@@ -84,6 +94,27 @@ class PackagingNamesTest(unittest.TestCase):
         )
         self.assertIn("export BPX_REQUIRED_BACKEND=fake", wrapper)
         self.assertIn("quadruped.motion_dev", wrapper)
+
+    def test_posture_test_manifest_is_distinct_and_requires_local_confirmation(self) -> None:
+        manifest = (PACKAGE_ROOT / "package_manifest.posture-test.yaml").read_text(
+            encoding="utf-8"
+        )
+        wrapper = (PACKAGE_ROOT / "scripts/start-posture-test.sh").read_text(
+            encoding="utf-8"
+        )
+        provider = (PACKAGE_ROOT / "bpx_quadruped/main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertTrue(manifest.startswith("# HARDWARE TEST ONLY:"))
+        self.assertIn("quadruped.posture_test", manifest)
+        self.assertIn("robonix/primitive/quadruped/posture", manifest)
+        self.assertNotIn("robonix/primitive/quadruped/twist_in", manifest)
+        self.assertIn("start-posture-test.sh", manifest)
+        self.assertIn("BPX_CONFIRM_PHYSICAL_POSTURE_SERVICE", wrapper)
+        self.assertIn("I_UNDERSTAND_POSTURE_RPC_CAN_MOVE_BPX", wrapper)
+        self.assertIn("BPX_POSTURE_CAPABILITY=true", wrapper)
+        self.assertIn('primitive.grpc("robonix/primitive/quadruped/posture")', provider)
 
     def test_distribution_and_default_image_include_vendor(self) -> None:
         setup = (PACKAGE_ROOT / "setup.cfg").read_text(encoding="utf-8")
@@ -109,6 +140,14 @@ class PackagingNamesTest(unittest.TestCase):
         )
         self.assertIn("export RBNX_INSTANCE_NAME", start_script)
 
+        production_wrapper = PACKAGE_ROOT / "scripts/start-sdk-posture.sh"
+        wrapper = production_wrapper.read_text(encoding="utf-8")
+        self.assertTrue(os.access(production_wrapper, os.X_OK))
+        self.assertIn("export BPX_REQUIRED_BACKEND=sdk", wrapper)
+        self.assertIn("export BPX_POSTURE_CAPABILITY=true", wrapper)
+        self.assertIn("export BPX_REQUIRED_POSTURE_CAPABILITY=true", wrapper)
+        self.assertNotIn("BPX_CONFIRM_PHYSICAL_POSTURE_SERVICE", wrapper)
+
     def test_external_sdk_wheel_is_verified_and_mounted_read_only(self) -> None:
         start_script = (PACKAGE_ROOT / "scripts/start.sh").read_text(encoding="utf-8")
         entrypoint = (PACKAGE_ROOT / "docker/entrypoint.sh").read_text(encoding="utf-8")
@@ -118,6 +157,62 @@ class PackagingNamesTest(unittest.TestCase):
         self.assertIn(":/vendor-sdk/$wheel_name:ro", start_script)
         self.assertIn('BPX_SDK_WHEEL="/vendor-sdk/$wheel_name"', start_script)
         self.assertIn('python3 -m pip install --no-index --no-deps "$BPX_SDK_WHEEL"', entrypoint)
+
+    def test_sdk_runtime_has_explicit_docker_desktop_udp_mode(self) -> None:
+        start_script = (PACKAGE_ROOT / "scripts/start.sh").read_text(encoding="utf-8")
+        probe_script = (PACKAGE_ROOT / "scripts/run-read-only-probe.sh").read_text(
+            encoding="utf-8"
+        )
+        record_script = (PACKAGE_ROOT / "scripts/record-sdk-replay.sh").read_text(
+            encoding="utf-8"
+        )
+        for script in (start_script, probe_script, record_script):
+            self.assertIn("BPX_DOCKER_NETWORK_MODE", script)
+            self.assertIn("--publish", script)
+        self.assertIn("BPX_DOCKER_STATE_UDP_PORT", start_script)
+        self.assertIn("BPX_DOCKER_HOST_ADDRESS", start_script)
+        self.assertIn("host.docker.internal:host-gateway", start_script)
+        self.assertIn("-e BPX_DOCKER_NETWORK_MODE", start_script)
+        entrypoint = (PACKAGE_ROOT / "docker/entrypoint.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('BPX_DOCKER_NETWORK_MODE:-host', entrypoint)
+        self.assertIn('ROBONIX_ADVERTISE_HOST="$(hostname -i', entrypoint)
+
+    def test_posture_probe_is_explicit_and_excludes_velocity_and_joint_control(self) -> None:
+        wrapper = (PACKAGE_ROOT / "scripts/run-posture-cycle-probe.sh").read_text(
+            encoding="utf-8"
+        )
+        adapter = (PACKAGE_ROOT / "bpx_quadruped/sdk_posture.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("--confirm-physical-motion", wrapper)
+        self.assertIn("MotionLevelControl", adapter)
+        self.assertIn("setStandUp", adapter)
+        self.assertIn("setSitDown", adapter)
+        self.assertIn("supports_twist", adapter)
+        self.assertNotIn(".setVelocity(", adapter)
+        self.assertNotIn(".setZeroPositionsFlag(", adapter)
+        self.assertNotIn("JointLevelControl()", adapter)
+
+    def test_yaw_circle_probe_is_manual_only_and_excludes_joint_control(self) -> None:
+        wrapper = (PACKAGE_ROOT / "scripts/run-yaw-circle-probe.sh").read_text(
+            encoding="utf-8"
+        )
+        adapter = (PACKAGE_ROOT / "bpx_quadruped/sdk_yaw_circle.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("--confirm-physical-yaw-circle", wrapper)
+        self.assertIn("--yaw-circle", wrapper)
+        self.assertIn("setVelocity", adapter)
+        self.assertIn("0.0, 0.0, float(yaw_rate_rps)", adapter)
+        self.assertNotIn("JointLevelControl()", adapter)
+        self.assertNotIn("setZeroPositionsFlag", adapter)
+        for path in PACKAGE_ROOT.glob("package_manifest*.yaml"):
+            manifest = path.read_text(encoding="utf-8")
+            self.assertNotIn("run-yaw-circle-probe.sh", manifest)
 
     def test_sdk_read_only_manifest_does_not_declare_a_command_capability(self) -> None:
         manifest = (PACKAGE_ROOT / "package_manifest.sdk-read-only.yaml").read_text(
@@ -130,11 +225,22 @@ class PackagingNamesTest(unittest.TestCase):
         wrapper = (PACKAGE_ROOT / "scripts/start-sdk-read-only.sh").read_text(
             encoding="utf-8"
         )
+        self.assertTrue(os.access(PACKAGE_ROOT / "scripts/start-sdk-read-only.sh", os.X_OK))
         self.assertIn('[[ -n "${BPX_SDK_WHEEL:-}" ]]', wrapper)
         self.assertIn("export BPX_REQUIRED_BACKEND=sdk", wrapper)
 
         start_script = (PACKAGE_ROOT / "scripts/start.sh").read_text(encoding="utf-8")
         self.assertIn("-e BPX_REQUIRED_BACKEND", start_script)
+
+    def test_provider_shutdown_stops_ros_before_native_extension_unload(self) -> None:
+        provider = (PACKAGE_ROOT / "bpx_quadruped/main.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("_runtime.shutdown()", provider)
+        self.assertIn("RosBackend.get().shutdown()", provider)
+
+        stop_script = (PACKAGE_ROOT / "scripts/stop.sh").read_text(encoding="utf-8")
+        self.assertIn('BPX_RBNX_STOP_TIMEOUT_S:-30', stop_script)
 
     def test_replay_manifest_is_read_only_and_forces_replay_backend(self) -> None:
         manifest = (PACKAGE_ROOT / "package_manifest.state-replay.yaml").read_text(

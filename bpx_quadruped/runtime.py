@@ -1,4 +1,4 @@
-"""Provider runtime seam for controlled and strictly read-only adapters."""
+"""Provider runtime seam for controlled, posture, and read-only adapters."""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ from .config import ProviderConfig
 from .controller import QuadrupedController
 from .fake_backend import FakeBpxBackend
 from .model import CommandDecision, PlanarTwist, RobotState
+from .posture_runtime import PostureRuntime, PostureRuntimeConfig
 from .replay import ReplayStateSource
+from .sdk_posture import SdkPostureConfig, SdkPostureSession
 from .sdk_state_source import SdkStateConfig, SdkStateSource
 from .telemetry import state_for_publication
 
@@ -20,6 +22,10 @@ class ProviderRuntime(Protocol):
 
     @property
     def supports_twist(self) -> bool:
+        ...
+
+    @property
+    def supports_posture(self) -> bool:
         ...
 
     def activate(self) -> None:
@@ -37,6 +43,9 @@ class ProviderRuntime(Protocol):
     def submit_twist(self, command: PlanarTwist) -> CommandDecision:
         ...
 
+    def set_posture(self, posture_name: str) -> CommandDecision:
+        ...
+
     def tick(self) -> RobotState:
         ...
 
@@ -51,6 +60,10 @@ class ReadOnlyRuntime:
 
     @property
     def supports_twist(self) -> bool:
+        return False
+
+    @property
+    def supports_posture(self) -> bool:
         return False
 
     def activate(self) -> None:
@@ -84,6 +97,10 @@ class ReadOnlyRuntime:
         del command
         return CommandDecision(False, "read-only runtime has no command interface")
 
+    def set_posture(self, posture_name: str) -> CommandDecision:
+        del posture_name
+        return CommandDecision(False, "read-only runtime has no posture interface")
+
     def tick(self) -> RobotState:
         if not self._active:
             raise RuntimeError("read-only runtime is not active")
@@ -94,6 +111,7 @@ def build_runtime(
     config: ProviderConfig,
     *,
     sdk_request_factory: Optional[Callable[[], object]] = None,
+    sdk_control_factory: Optional[Callable[[], object]] = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> ProviderRuntime:
@@ -112,15 +130,38 @@ def build_runtime(
             ReplayStateSource.from_path(config.replay_path, clock=clock)
         )
 
+    state_config = SdkStateConfig(
+        robot_ip=config.robot_ip,
+        robot_state_port=config.robot_state_port,
+        tcp_local_port=config.sdk_tcp_local_port,
+        state_rate_hz=config.state_rate_hz,
+        connect_timeout_s=config.sdk_connect_timeout_s,
+        poll_period_s=config.sdk_poll_period_s,
+    )
+    if config.enable_posture_service:
+        return PostureRuntime(
+            SdkPostureSession(
+                SdkPostureConfig(
+                    state=state_config,
+                    motion_command_rate_hz=config.command_rate_hz,
+                ),
+                control_factory=sdk_control_factory,
+                clock=clock,
+                sleep=sleep,
+            ),
+            PostureRuntimeConfig(
+                stand_timeout_s=config.posture_stand_timeout_s,
+                sit_timeout_s=config.posture_sit_timeout_s,
+                poll_period_s=config.posture_poll_period_s,
+                state_timeout_s=config.controller.state_timeout_s,
+                cleanup_sit_flush_s=config.posture_cleanup_sit_flush_s,
+            ),
+            clock=clock,
+            sleep=sleep,
+        )
+
     source = SdkStateSource(
-        SdkStateConfig(
-            robot_ip=config.robot_ip,
-            robot_state_port=config.robot_state_port,
-            tcp_local_port=config.sdk_tcp_local_port,
-            state_rate_hz=config.state_rate_hz,
-            connect_timeout_s=config.sdk_connect_timeout_s,
-            poll_period_s=config.sdk_poll_period_s,
-        ),
+        state_config,
         request_factory=sdk_request_factory,
         clock=clock,
         sleep=sleep,

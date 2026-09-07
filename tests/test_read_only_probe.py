@@ -27,6 +27,12 @@ class FakeRobotState:
             "angular_velocity": [0.0, 0.0, 0.0],
         }
 
+    def getOdometryTimestamp(self):
+        return 1234
+
+    def getRobotVersion(self):
+        return (1, 0, 15, 90561076, 20260828, 152313)
+
 
 class ReadOnlyProbeTest(unittest.TestCase):
     def test_collect_sample_tolerates_unavailable_sdk_methods(self) -> None:

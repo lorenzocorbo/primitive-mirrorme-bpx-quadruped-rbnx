@@ -31,6 +31,11 @@ class ProviderConfig:
     odom_rate_hz: float
     publish_odom_tf: bool
     auto_arm_fake: bool
+    enable_posture_service: bool
+    posture_stand_timeout_s: float
+    posture_sit_timeout_s: float
+    posture_poll_period_s: float
+    posture_cleanup_sit_flush_s: float
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> "ProviderConfig":
@@ -61,6 +66,11 @@ class ProviderConfig:
             "odom_rate_hz",
             "publish_odom_tf",
             "auto_arm_fake",
+            "enable_posture_service",
+            "posture_stand_timeout_s",
+            "posture_sit_timeout_s",
+            "posture_poll_period_s",
+            "posture_cleanup_sit_flush_s",
         }
         unknown = sorted(set(values).difference(allowed))
         if unknown:
@@ -110,8 +120,20 @@ class ProviderConfig:
             raise ValueError("auto_arm_fake must be a boolean")
         if auto_arm_fake and backend != "fake":
             raise ValueError("auto_arm_fake is only valid with backend=fake")
-        if backend in {"sdk", "replay"} and controller.allow_motion:
-            raise ValueError("backend={} requires allow_motion=false".format(backend))
+        enable_posture_service = values.get("enable_posture_service", False)
+        if not isinstance(enable_posture_service, bool):
+            raise ValueError("enable_posture_service must be a boolean")
+        if enable_posture_service and backend != "sdk":
+            raise ValueError("enable_posture_service is only valid with backend=sdk")
+        if enable_posture_service and not controller.allow_motion:
+            raise ValueError("enable_posture_service requires allow_motion=true")
+        if backend == "sdk" and controller.allow_motion and not enable_posture_service:
+            raise ValueError(
+                "backend=sdk requires allow_motion=false unless the guarded "
+                "posture service is enabled"
+            )
+        if backend == "replay" and controller.allow_motion:
+            raise ValueError("backend=replay requires allow_motion=false")
 
         replay_path_value = values.get("replay_path")
         replay_path: Optional[str] = None
@@ -166,6 +188,31 @@ class ProviderConfig:
             odom_rate_hz=odom_rate_hz,
             publish_odom_tf=publish_odom_tf,
             auto_arm_fake=auto_arm_fake,
+            enable_posture_service=enable_posture_service,
+            posture_stand_timeout_s=_bounded_float(
+                values.get("posture_stand_timeout_s", 15.0),
+                "posture_stand_timeout_s",
+                0.1,
+                60.0,
+            ),
+            posture_sit_timeout_s=_bounded_float(
+                values.get("posture_sit_timeout_s", 15.0),
+                "posture_sit_timeout_s",
+                0.1,
+                60.0,
+            ),
+            posture_poll_period_s=_bounded_float(
+                values.get("posture_poll_period_s", 0.2),
+                "posture_poll_period_s",
+                0.01,
+                1.0,
+            ),
+            posture_cleanup_sit_flush_s=_bounded_float(
+                values.get("posture_cleanup_sit_flush_s", 1.0),
+                "posture_cleanup_sit_flush_s",
+                0.1,
+                3.0,
+            ),
         )
 
 
@@ -181,6 +228,25 @@ def validate_required_backend(
     if config.backend != required_backend:
         raise ValueError(
             "selected package manifest requires backend={}".format(required_backend)
+        )
+
+
+def validate_required_posture_capability(
+    config: ProviderConfig, required: Optional[str]
+) -> None:
+    """Keep the pre-bootstrap gRPC registration aligned with runtime config."""
+
+    if required is None:
+        return
+    normalized = required.strip().lower()
+    if normalized not in {"true", "false"}:
+        raise ValueError("BPX_REQUIRED_POSTURE_CAPABILITY must be true or false")
+    expected = normalized == "true"
+    if config.enable_posture_service != expected:
+        raise ValueError(
+            "selected package manifest requires enable_posture_service={}".format(
+                str(expected).lower()
+            )
         )
 
 

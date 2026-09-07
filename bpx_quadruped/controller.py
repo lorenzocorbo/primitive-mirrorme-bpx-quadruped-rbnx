@@ -52,6 +52,14 @@ class QuadrupedController:
     def supports_twist(self) -> bool:
         return True
 
+    @property
+    def supports_posture(self) -> bool:
+        return False
+
+    def set_posture(self, posture_name: str) -> CommandDecision:
+        del posture_name
+        return CommandDecision(False, "controlled twist runtime has no posture service")
+
     def activate(self) -> None:
         with self._lock:
             if self._lifecycle is LifecycleState.SHUTDOWN:

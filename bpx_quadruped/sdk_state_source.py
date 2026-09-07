@@ -2,8 +2,9 @@
 
 This module deliberately knows only ``RequestRobotState``. It has no command
 method and never imports or constructs ``MotionLevelControl`` or
-``JointLevelControl``. A separate, explicitly armed adapter will own motion in
-a later milestone.
+``JointLevelControl``. The posture runtime injects its single
+``MotionLevelControl`` owner through this state-only seam; the explicit SDK
+read-only runtime constructs ``RequestRobotState`` only.
 """
 
 from __future__ import annotations

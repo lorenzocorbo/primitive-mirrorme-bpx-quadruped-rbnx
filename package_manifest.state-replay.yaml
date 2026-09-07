@@ -2,7 +2,7 @@ manifestVersion: 1
 
 package:
   name: robonix.primitive.mirrorme.bpx.quadruped
-  version: 0.1.0-dev.1
+  version: 0.1.0-dev.2
   description: Read-only normalized BPX state replay for offline Robonix integration tests.
   tags: [primitive, quadruped, mirrorme, bpx, ros2, docker, read-only, replay]
   maintainers:

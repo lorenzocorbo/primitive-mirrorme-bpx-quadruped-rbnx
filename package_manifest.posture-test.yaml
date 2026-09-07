@@ -1,0 +1,24 @@
+# HARDWARE TEST ONLY: do not submit this package identity to the Robonix
+# Package Catalog or use it as the Robot Deployment default.
+manifestVersion: 1
+
+package:
+  name: robonix.primitive.mirrorme.bpx.quadruped.posture_test
+  version: 0.1.0-dev.2
+  description: Manually confirmed BPX stand/sit Robonix RPC hardware-test profile.
+  tags: [primitive, quadruped, mirrorme, bpx, ros2, docker, development, hardware-test, posture]
+  maintainers:
+    - nonkr <nonkr@hotmail.com>
+  license: Apache-2.0
+
+build: bash scripts/build.sh
+start: bash scripts/start-posture-test.sh
+stop: bash scripts/stop.sh
+
+# This profile owns one MotionLevelControl instance and permits only stand/sit.
+# It has no twist_in, move, gait, damping, or JointLevelControl capability.
+capabilities:
+  - name: robonix/primitive/quadruped/odom
+  - name: robonix/primitive/quadruped/posture
+
+depends: []

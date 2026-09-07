@@ -13,6 +13,18 @@ if [[ -d /robonix-api ]]; then
   export PYTHONPATH="/robonix-api:${PYTHONPATH:-}"
 fi
 
+# robonix-api normally derives the advertised provider address with `ip route`.
+# The slim ROS runtime image does not ship iproute2, so bridge deployments must
+# publish the container's reachable IPv4 address explicitly.
+if [[ "${BPX_DOCKER_NETWORK_MODE:-host}" == "bridge" && -z "${ROBONIX_ADVERTISE_HOST:-}" ]]; then
+  ROBONIX_ADVERTISE_HOST="$(hostname -i | awk '{print $1}')"
+  [[ -n "$ROBONIX_ADVERTISE_HOST" ]] || {
+    echo "failed to determine bridge container address" >&2
+    exit 1
+  }
+  export ROBONIX_ADVERTISE_HOST
+fi
+
 if [[ -n "${BPX_SDK_WHEEL:-}" ]]; then
   [[ -f "$BPX_SDK_WHEEL" ]] || {
     echo "mounted BPX_SDK_WHEEL is missing: $BPX_SDK_WHEEL" >&2

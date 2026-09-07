@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from types import ModuleType
-from typing import Any, Dict
+from typing import Any, Dict, Iterable, Optional
 
 
 REQUIRED_READ_METHODS = (
@@ -33,6 +34,13 @@ MOTION_METHODS = (
     "setDamping",
 )
 
+REQUIRED_POSTURE_METHODS = (
+    "setMotionCommandRate",
+    "setVelocityControlFlag",
+    "setStandUp",
+    "setSitDown",
+)
+
 
 def validate_sdk_module(sdk: ModuleType) -> Dict[str, Any]:
     version = getattr(sdk, "__version__", None)
@@ -58,10 +66,96 @@ def validate_sdk_module(sdk: ModuleType) -> Dict[str, Any]:
     }
 
 
-def main() -> int:
+def validate_posture_sdk_module(sdk: ModuleType) -> Dict[str, Any]:
+    """Check the narrow MotionLevelControl API used by the posture probe."""
+
+    version = getattr(sdk, "__version__", None)
+    if version != "1.0.8":
+        raise RuntimeError("expected BPX SDK 1.0.8, got {!r}".format(version))
+    control_type = getattr(sdk, "MotionLevelControl", None)
+    if control_type is None:
+        raise RuntimeError("BPX SDK has no MotionLevelControl")
+    missing_state = [
+        name for name in REQUIRED_READ_METHODS if not hasattr(control_type, name)
+    ]
+    if missing_state:
+        raise RuntimeError(
+            "MotionLevelControl state API is missing: {}".format(
+                ", ".join(missing_state)
+            )
+        )
+    missing = [
+        name for name in REQUIRED_POSTURE_METHODS if not hasattr(control_type, name)
+    ]
+    if missing:
+        raise RuntimeError(
+            "MotionLevelControl is missing: {}".format(", ".join(missing))
+        )
+    motion_state_type = getattr(sdk, "MotionState", None)
+    if motion_state_type is None:
+        raise RuntimeError("BPX SDK has no MotionState enum")
+    expected_states = {"LyingDown": 0, "Motion": 6}
+    for name, expected in expected_states.items():
+        member = getattr(motion_state_type, name, None)
+        try:
+            actual = int(member)
+        except (TypeError, ValueError):
+            actual = None
+        if actual != expected:
+            raise RuntimeError(
+                "BPX SDK MotionState.{} must be {}, got {!r}".format(
+                    name, expected, member
+                )
+            )
+    return {
+        "motion_level_control_state_methods_checked": len(REQUIRED_READ_METHODS),
+        "motion_level_control_methods_checked": len(REQUIRED_POSTURE_METHODS),
+        "motion_states": {"LyingDown": 0, "Motion": 6},
+        "posture_commands": ["setStandUp", "setSitDown"],
+        "supports_twist": False,
+        "uses_joint_level_control": False,
+    }
+
+
+def validate_yaw_circle_sdk_module(sdk: ModuleType) -> Dict[str, Any]:
+    """Check the additional API used only by the manual yaw-circle probe."""
+
+    result = validate_posture_sdk_module(sdk)
+    control_type = sdk.MotionLevelControl
+    if not hasattr(control_type, "setVelocity"):
+        raise RuntimeError("MotionLevelControl is missing: setVelocity")
+    result.update(
+        {
+            "yaw_circle_probe_methods": ["setVelocity"],
+            "yaw_circle_probe_only": True,
+            "supports_twist": False,
+        }
+    )
+    return result
+
+
+def main(argv: Optional[Iterable[str]] = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--posture",
+        action="store_true",
+        help="also verify the narrow stand/sit MotionLevelControl API",
+    )
+    parser.add_argument(
+        "--yaw-circle",
+        action="store_true",
+        help="also verify setVelocity for the isolated manual yaw-circle probe",
+    )
+    args = parser.parse_args(argv)
+
     import bpx_sdk
 
-    print(json.dumps(validate_sdk_module(bpx_sdk), sort_keys=True))
+    result = validate_sdk_module(bpx_sdk)
+    if args.yaw_circle:
+        result.update(validate_yaw_circle_sdk_module(bpx_sdk))
+    elif args.posture:
+        result.update(validate_posture_sdk_module(bpx_sdk))
+    print(json.dumps(result, sort_keys=True))
     return 0
 
 

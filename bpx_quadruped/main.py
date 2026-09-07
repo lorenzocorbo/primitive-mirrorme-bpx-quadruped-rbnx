@@ -9,7 +9,11 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-from .config import ProviderConfig, validate_required_backend
+from .config import (
+    ProviderConfig,
+    validate_required_backend,
+    validate_required_posture_capability,
+)
 from .joint_state import JointStateProjector
 from .model import PlanarTwist
 from .runtime import ProviderRuntime, build_runtime
@@ -37,6 +41,21 @@ primitive = Primitive(
     namespace="robonix/primitive/quadruped",
 )
 
+
+def _environment_flag(name: str) -> bool:
+    value = os.environ.get(name, "false").strip().lower()
+    if value not in {"true", "false"}:
+        raise RuntimeError("{} must be true or false".format(name))
+    return value == "true"
+
+
+_POSTURE_CAPABILITY_ENABLED = _environment_flag("BPX_POSTURE_CAPABILITY")
+if _POSTURE_CAPABILITY_ENABLED:
+    try:
+        from quadruped_pb2 import SetPosture_Response
+    except ImportError as exc:  # pragma: no cover - runtime/codegen boundary
+        raise RuntimeError("posture capability requires generated quadruped protobuf") from exc
+
 _runtime: Optional[ProviderRuntime] = None
 _config: Optional[ProviderConfig] = None
 _publish_thread: Optional[threading.Thread] = None
@@ -45,6 +64,23 @@ _joint_state_projector = JointStateProjector()
 _tf_broadcaster: Optional[TransformBroadcaster] = None
 
 _INTERNAL_JOINT_STATES = "internal/mirrorme/bpx/joint_states"
+
+
+def _on_set_posture(request, _context=None):
+    runtime = _runtime
+    if runtime is None:
+        return SetPosture_Response(success=False, message="provider was not initialized")
+    decision = runtime.set_posture(str(request.posture_name))
+    if not decision.accepted:
+        log.warning("posture rejected: %s", decision.reason)
+    return SetPosture_Response(
+        success=decision.accepted,
+        message=decision.reason,
+    )
+
+
+if _POSTURE_CAPABILITY_ENABLED:
+    primitive.grpc("robonix/primitive/quadruped/posture")(_on_set_posture)
 
 
 def _on_twist(msg: Twist) -> None:
@@ -140,6 +176,13 @@ def on_init(cfg: Dict[str, Any]):
     try:
         _config = ProviderConfig.from_mapping(cfg)
         validate_required_backend(_config, os.environ.get("BPX_REQUIRED_BACKEND"))
+        validate_required_posture_capability(
+            _config, os.environ.get("BPX_REQUIRED_POSTURE_CAPABILITY")
+        )
+        if _config.enable_posture_service != _POSTURE_CAPABILITY_ENABLED:
+            raise ValueError(
+                "runtime posture configuration does not match registered capability"
+            )
         _runtime = build_runtime(_config)
         if _runtime.supports_twist:
             primitive.create_subscription(
@@ -212,8 +255,14 @@ def on_shutdown():
     _stop_publish.set()
     if _publish_thread is not None:
         _publish_thread.join(timeout=2.0)
-    if _runtime is not None:
-        _runtime.shutdown()
+    try:
+        if _runtime is not None:
+            _runtime.shutdown()
+    finally:
+        # robonix-api owns a daemon ROS executor thread. Shut it down before
+        # the process unloads the vendor SDK extension; otherwise CPython
+        # finalization can race native threads after Driver(CMD_SHUTDOWN).
+        RosBackend.get().shutdown()
     return Ok()
 
 

@@ -8,7 +8,11 @@ PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 
-from bpx_quadruped.config import ProviderConfig, validate_required_backend
+from bpx_quadruped.config import (
+    ProviderConfig,
+    validate_required_backend,
+    validate_required_posture_capability,
+)
 
 
 class ProviderConfigTest(unittest.TestCase):
@@ -24,6 +28,7 @@ class ProviderConfigTest(unittest.TestCase):
         self.assertEqual(0.05, config.sdk_poll_period_s)
         self.assertIsNone(config.replay_path)
         self.assertFalse(config.publish_odom_tf)
+        self.assertFalse(config.enable_posture_service)
 
     def test_string_false_is_not_accepted_as_boolean(self) -> None:
         with self.assertRaisesRegex(ValueError, "allow_motion must be a boolean"):
@@ -58,6 +63,47 @@ class ProviderConfigTest(unittest.TestCase):
         self.assertFalse(config.controller.allow_motion)
         with self.assertRaisesRegex(ValueError, "backend=sdk requires allow_motion=false"):
             ProviderConfig.from_mapping({"backend": "sdk", "allow_motion": True})
+
+    def test_sdk_posture_service_is_an_explicit_narrow_motion_exception(self) -> None:
+        config = ProviderConfig.from_mapping(
+            {
+                "backend": "sdk",
+                "allow_motion": True,
+                "enable_posture_service": True,
+            }
+        )
+        self.assertTrue(config.controller.allow_motion)
+        self.assertTrue(config.enable_posture_service)
+
+        with self.assertRaisesRegex(ValueError, "requires allow_motion=true"):
+            ProviderConfig.from_mapping(
+                {"backend": "sdk", "enable_posture_service": True}
+            )
+        with self.assertRaisesRegex(ValueError, "only valid with backend=sdk"):
+            ProviderConfig.from_mapping(
+                {
+                    "backend": "fake",
+                    "allow_motion": True,
+                    "enable_posture_service": True,
+                }
+            )
+
+    def test_manifest_posture_requirement_must_match_runtime(self) -> None:
+        enabled = ProviderConfig.from_mapping(
+            {
+                "backend": "sdk",
+                "allow_motion": True,
+                "enable_posture_service": True,
+            }
+        )
+        disabled = ProviderConfig.from_mapping({"backend": "sdk"})
+
+        validate_required_posture_capability(enabled, "true")
+        validate_required_posture_capability(disabled, "false")
+        with self.assertRaisesRegex(ValueError, "enable_posture_service=true"):
+            validate_required_posture_capability(disabled, "true")
+        with self.assertRaisesRegex(ValueError, "must be true or false"):
+            validate_required_posture_capability(enabled, "yes")
 
     def test_replay_backend_requires_an_absolute_path_and_is_read_only(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires replay_path"):

@@ -46,6 +46,37 @@ if [[ -n "$SDK_WHEEL" ]]; then
   )
 fi
 
+DOCKER_NETWORK_ARGS=()
+case "${BPX_DOCKER_NETWORK_MODE:-host}" in
+  host)
+    DOCKER_NETWORK_ARGS=(--network host)
+    ;;
+  bridge)
+    state_udp_port="${BPX_DOCKER_STATE_UDP_PORT:-9873}"
+    docker_host_address="${BPX_DOCKER_HOST_ADDRESS:-host.docker.internal}"
+    [[ "$state_udp_port" =~ ^[0-9]+$ ]] &&
+      ((state_udp_port >= 1024 && state_udp_port <= 65535)) || {
+      echo "BPX_DOCKER_STATE_UDP_PORT must be in 1024..65535" >&2
+      exit 2
+    }
+    DOCKER_NETWORK_ARGS=(
+      --network bridge
+      --publish "$state_udp_port:$state_udp_port/udp"
+      --add-host host.docker.internal:host-gateway
+    )
+    case "${ROBONIX_ATLAS:-127.0.0.1:50051}" in
+      127.0.0.1:*)
+        ROBONIX_ATLAS="${docker_host_address}:${ROBONIX_ATLAS##*:}"
+        export ROBONIX_ATLAS
+        ;;
+    esac
+    ;;
+  *)
+    echo "BPX_DOCKER_NETWORK_MODE must be host or bridge" >&2
+    exit 2
+    ;;
+esac
+
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
   existing_label="$(docker inspect --format "{{ index .Config.Labels \"$LABEL_KEY\" }}" "$CONTAINER")"
   [[ "$existing_label" == "$LABEL_VALUE" ]] || {
@@ -63,14 +94,17 @@ trap cleanup EXIT INT TERM
 docker run --rm \
   --name "$CONTAINER" \
   --label "$LABEL_KEY=$LABEL_VALUE" \
-  --network host \
+  "${DOCKER_NETWORK_ARGS[@]}" \
   --ipc host \
   -e ROBONIX_ATLAS \
   -e ROBONIX_PROVIDER_BIND_HOST \
   -e ROBONIX_ADVERTISE_HOST \
+  -e BPX_DOCKER_NETWORK_MODE \
   -e RBNX_INSTANCE_NAME \
   -e RBNX_DEPLOY_MANAGED \
   -e BPX_REQUIRED_BACKEND \
+  -e BPX_POSTURE_CAPABILITY \
+  -e BPX_REQUIRED_POSTURE_CAPABILITY \
   -e ROBONIX_DRIVER_CONTRACT_ID \
   -e ROBONIX_DRIVER_ALLOW_OLD_ARTIFACT_FALLBACK \
   -e ROS_DOMAIN_ID \

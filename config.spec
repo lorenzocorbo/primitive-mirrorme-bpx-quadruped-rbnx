@@ -5,8 +5,9 @@
 
 config:
   # enum string: fake, sdk, or replay; default: fake.
-  # sdk is strictly read-only and requires allow_motion=false plus a verified,
-  # externally mounted BPX_SDK_WHEEL.
+  # sdk requires a verified, externally mounted BPX_SDK_WHEEL. The production
+  # manifest enables only the guarded stand/sit posture service; the explicit
+  # sdk-read-only manifest keeps allow_motion=false.
   backend: fake
 
   # Absolute JSONL capture path; required only for backend=replay. The replay
@@ -16,6 +17,11 @@ config:
   # boolean, default: false.
   # Process-level gate only. It never replaces local arm or a physical E-stop.
   allow_motion: false
+
+  # boolean, default: false. Valid only with backend=sdk and
+  # allow_motion=true. This selects the stand/sit-only SDK runtime;
+  # it does not enable twist, gait, damping, or joint-level commands.
+  enable_posture_service: false
 
   # string IPv4 address, default: 10.21.20.1.
   robot_ip: 10.21.20.1
@@ -33,6 +39,12 @@ config:
   sdk_tcp_local_port: 0
   sdk_connect_timeout_s: 10.0
   sdk_poll_period_s: 0.05
+
+  # Bounds for the isolated stand/sit Robonix posture RPC.
+  posture_stand_timeout_s: 15.0
+  posture_sit_timeout_s: 15.0
+  posture_poll_period_s: 0.2
+  posture_cleanup_sit_flush_s: 1.0
 
   # positive float seconds, default: 0.25.
   command_timeout_s: 0.25

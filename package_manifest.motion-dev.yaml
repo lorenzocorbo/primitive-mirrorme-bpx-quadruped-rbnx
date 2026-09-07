@@ -4,7 +4,7 @@ manifestVersion: 1
 
 package:
   name: robonix.primitive.mirrorme.bpx.quadruped.motion_dev
-  version: 0.1.0-dev.1
+  version: 0.1.0-dev.2
   description: Offline fake-motion profile for BPX adapter safety and integration development.
   tags: [primitive, quadruped, mirrorme, bpx, ros2, docker, development, fake, motion-dev]
   maintainers:
@@ -16,7 +16,7 @@ start: bash scripts/start-motion-dev.sh
 stop: bash scripts/stop.sh
 
 # This capability surface exists only against FakeBpxBackend. It is kept under
-# a distinct package identity so the release package remains odom-only.
+# a distinct package identity so the release package remains twist-free.
 capabilities:
   - name: robonix/primitive/quadruped/twist_in
   - name: robonix/primitive/quadruped/odom

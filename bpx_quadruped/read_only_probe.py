@@ -11,7 +11,9 @@ import argparse
 from datetime import datetime, timezone
 import json
 import math
+import signal
 import sys
+import threading
 import time
 from typing import Any, Dict, Iterable, Optional
 
@@ -101,9 +103,16 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("{} must be finite and > 0".format(name.replace("_", "-")))
 
 
-def run(args: argparse.Namespace) -> int:
+def run(
+    args: argparse.Namespace,
+    *,
+    stop_event: Optional[threading.Event] = None,
+) -> int:
     validate_args(args)
     import bpx_sdk
+
+    if stop_event is None:
+        stop_event = threading.Event()
 
     robot_state = bpx_sdk.RequestRobotState()
     robot_state.setRobotIp(args.robot_ip)
@@ -125,20 +134,47 @@ def run(args: argparse.Namespace) -> int:
         flush=True,
     )
 
+    connect_started = time.monotonic()
     if not robot_state.connect():
         raise RuntimeError("RequestRobotState.connect() returned false")
 
     try:
-        connect_deadline = time.monotonic() + args.connect_timeout_s
-        while not robot_state.isConnected():
+        connect_deadline = connect_started + args.connect_timeout_s
+        while not stop_event.is_set():
+            connected = robot_state.isConnected()
+            odometry = robot_state.getLegOdom() if connected else None
+            odometry_timestamp = (
+                robot_state.getOdometryTimestamp() if connected else None
+            )
+            if connected and odometry is not None and odometry_timestamp is not None:
+                break
             if time.monotonic() >= connect_deadline:
-                raise TimeoutError("BPX state connection did not become ready")
+                raise TimeoutError(
+                    "BPX state connection did not produce an odometry frame"
+                )
             time.sleep(0.05)
 
+        if stop_event.is_set():
+            return 0
+
+        get_robot_version = getattr(robot_state, "getRobotVersion", None)
+        robot_version = get_robot_version() if get_robot_version is not None else None
+        print(
+            json.dumps(
+                {
+                    "event": "probe_ready",
+                    "first_odometry_latency_s": time.monotonic() - connect_started,
+                    "robot_version": _json_safe(robot_version),
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+
         end_at = time.monotonic() + args.duration_s
-        while time.monotonic() < end_at:
+        while not stop_event.is_set() and time.monotonic() < end_at:
             print(json.dumps(collect_sample(robot_state), sort_keys=True), flush=True)
-            time.sleep(args.sample_period_s)
+            stop_event.wait(args.sample_period_s)
     finally:
         robot_state.disconnect()
         print(json.dumps({"event": "probe_stop"}, sort_keys=True), flush=True)
@@ -148,11 +184,23 @@ def run(args: argparse.Namespace) -> int:
 def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    stop_event = threading.Event()
+    previous_handlers = {}
+
+    def request_stop(_signum, _frame) -> None:
+        stop_event.set()
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        previous_handlers[signum] = signal.getsignal(signum)
+        signal.signal(signum, request_stop)
     try:
-        return run(args)
+        return run(args, stop_event=stop_event)
     except (RuntimeError, TimeoutError, ValueError) as exc:
         print("read-only probe failed: {}".format(exc), file=sys.stderr)
         return 2
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
 
 if __name__ == "__main__":

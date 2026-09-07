@@ -1,33 +1,51 @@
 # MirrorMe BPX Quadruped Robonix Primitive
 
-Safety-first Robonix adapter for the MirrorMe BPX quadruped. The first release
-surface is an integrated, strictly read-only BPX SDK runtime. The repository
-also contains normalized state replay and an explicitly non-release fake-motion
-profile for offline integration and safety tests. It does not include or
-redistribute the BPX SDK.
+Safety-first Robonix adapter for the MirrorMe BPX quadruped. The release
+surface publishes odometry and exact `stand`/`sit` posture RPCs through one
+SDK owner. The repository also contains a strictly read-only SDK profile,
+normalized state replay, and a non-release fake-motion profile. It does not
+include or redistribute the BPX SDK.
 
-The SDK baseline is v1.0.8 from the upstream `master` branch, pinned to public
-repository commit `19cb373a8d2f8e19eaab6a1441167f3287cc95dd`. The adapter does not
-follow the moving `master` HEAD implicitly.
+The SDK baseline is v1.0.8, pinned to public repository commit
+`cab478a5fd3dfce087e0774534bb87b51a3d69e1`. Download the CPython 3.10 Linux
+x86_64 wheel from the fixed
+[`v1.0.8` release](https://github.com/mirrormerobotics/bpx_sdk_open/releases/tag/v1.0.8),
+then pass its local path through `BPX_SDK_WHEEL`. The adapter does not follow
+the moving `master` HEAD implicitly.
 
 ## Current capability surface
 
-- Release manifests (`package_manifest.yaml`, `package_manifest.x86-docker.yaml`
-  and `package_manifest.sdk-read-only.yaml`):
-  `robonix/primitive/quadruped/odom` only.
+- Release manifests (`package_manifest.yaml` and
+  `package_manifest.x86-docker.yaml`): odom plus the `posture` RPC, restricted
+  to exact `stand` and `sit` names.
+- Explicit SDK read-only manifest: `robonix/primitive/quadruped/odom` only.
 - Replay profile: `robonix/primitive/quadruped/odom` only.
 - Non-release `package_manifest.motion-dev.yaml`: fake backend only, with
   `robonix/primitive/quadruped/twist_in` and
   `robonix/primitive/quadruped/odom` for offline safety tests.
+- Hardware-test-only `package_manifest.posture-test.yaml`: alternate SDK test
+  identity with
+  `odom` plus the `posture` RPC, restricted to the exact names `stand` and
+  `sit` and guarded by an explicit local startup acknowledgement.
 
-The production SDK runtime never creates the `twist_in` subscription. All
-release manifests force `backend=sdk`; a later configuration mismatch fails
+The production SDK runtime never creates the `twist_in` subscription. Release
+manifests force `backend=sdk`; a later configuration mismatch fails
 initialization. The fake command path has a distinct
 `robonix.primitive.mirrorme.bpx.quadruped.motion_dev` package identity so it
 cannot silently expand the published package's capability surface.
 
-`posture` and `move` are deliberately absent from the manifest until their
-implementations and safety tests are complete.
+`move` remains absent from every release manifest. `posture` is published
+after its Robonix RPC and true-hardware state closure were validated; the
+distinct `posture_test` identity remains available for diagnostics.
+
+The initial MotionLevelControl integrations were validated through isolated
+hardware-debug probes. The first exposes only `setStandUp()` and
+`setSitDown()` for one bounded stand/hold/sit cycle. A second manual probe uses
+only `setVelocity(0, 0, yaw)` for an odometry-closed-loop in-place circle. The
+validated stand/sit seam is now used by the production posture profile; the
+separate `posture_test` identity remains available for diagnostics. The
+Robonix `setVelocity(x, y, yaw)` mapping behind `twist_in` remains deferred,
+and `JointLevelControl` is out of scope.
 
 BPX does not support mapping, localization, or autonomous navigation. This
 Primitive therefore exposes no map, navigation-goal, path-planning, obstacle,
@@ -42,16 +60,17 @@ empty until the SDK torque unit is confirmed.
 
 ## Safety defaults
 
-- The release start entry requires the pinned SDK wheel and forces
-  `backend=sdk`.
+- The release start entry requires the pinned SDK wheel, forces `backend=sdk`,
+  and enables only guarded posture control.
 - The generic runtime config still defaults to `fake`, but only the explicitly
   selected motion-development manifest may use that backend.
-- `allow_motion` defaults to `false`.
-- `backend=sdk` requires `allow_motion=false` and constructs
-  `RequestRobotState` only.
-- Activation leaves the controller `DISARMED`.
+- `allow_motion` defaults to `false`; production posture configuration must
+  explicitly set `allow_motion=true` and `enable_posture_service=true`.
+- Activation validates a fresh `LyingDown(0)` or `Motion(6)` state but sends no
+  posture command.
 - The controlled fake path emits zero for invalid, stale, disconnected,
-  deactivated and shutdown states; the SDK path has no command method.
+  deactivated and shutdown states. The production SDK path exposes no velocity
+  method and accepts only explicit `stand`/`sit` posture RPCs.
 - No code in this package calls `setZeroPositionsFlag()`.
 
 ## Offline tests
@@ -91,12 +110,110 @@ bash scripts/run-read-only-probe.sh /path/to/the-wheel \
 ```
 
 The probe constructs `RequestRobotState` only. It never constructs a motion or
-joint controller and never calls `setZeroPositionsFlag()`.
+joint controller and never calls `setZeroPositionsFlag()`. It reports ready
+only after both the TCP session and the first odometry frame are available.
+In this document, read-only means there is no actuator-command interface. The
+vendor `connect()` sequence still configures state upload and performs the
+SDK's built-in robot-time synchronization handshake.
+
+Native Linux Docker should keep the default host networking. Docker Desktop
+does not expose the robot's UDP state upload to a host-network container in the
+same way; use an explicit bridge-mode UDP mapping for the bounded probe and
+recorder:
+
+```bash
+BPX_DOCKER_NETWORK_MODE=bridge \
+  bash scripts/run-read-only-probe.sh /path/to/the-wheel \
+  --robot-ip 192.168.1.237 --robot-state-port 9873 --duration-s 10
+```
+
+The selected UDP port must be free on the Docker host. The integrated runtime
+also accepts bridge mode. In that topology Atlas must listen on an address
+reachable from the Docker bridge, and `BPX_DOCKER_HOST_ADDRESS` must identify
+the address the Primitive container uses for Atlas (for the tested nested
+Docker Desktop topology, the local Docker bridge gateway). The container
+automatically advertises its own bridge IPv4 lifecycle endpoint. Native Linux
+Docker should retain the default host-network mode.
 
 The reusable `SdkStateSource` follows the same boundary. Its readiness wait is
 bounded, it maps leg odometry/IMU/joints/temperatures/motion/battery telemetry,
 and its host freshness timestamp advances only when the BPX odometry timestamp
 changes. It intentionally has no command method.
+
+## Explicit stand/hold/sit hardware probe
+
+After the physical E-stop, clear test area, operator presence, robot condition,
+and control-source arbitration have been checked, one stand/hold/sit cycle can
+be run with the narrow MotionLevelControl probe:
+
+```bash
+BPX_DOCKER_NETWORK_MODE=bridge \
+  bash scripts/run-posture-cycle-probe.sh /path/to/the-wheel \
+    --robot-ip 192.168.1.237 \
+    --robot-state-port 9873 \
+    --hold-duration-s 3 \
+    --confirm-physical-motion
+```
+
+Use the default host network instead on native Linux. The wrapper first checks
+the pinned wheel checksum and required MotionLevelControl API, then requires a
+fresh `LyingDown(0)` state before sending anything. It repeats `setStandUp()`
+until `Motion(6)`, verifies that state throughout the three-second hold, and
+repeats `setSitDown()` until `LyingDown(0)`. Failure, SIGINT, or SIGTERM after
+the stand phase starts triggers a bounded sit-down cleanup before disconnect.
+
+This probe never calls `setVelocity()`, `setZeroPositionsFlag()`, gait or
+damping commands, and never constructs `JointLevelControl`. It remains a
+manual diagnostic; production posture uses the same narrow SDK seam.
+
+## Robonix posture hardware-test profile
+
+`package_manifest.posture-test.yaml` connects the same narrow stand/sit seam to
+`robonix/primitive/quadruped/posture` under a separate diagnostic identity.
+The production package publishes the same RPC without the test-only startup
+acknowledgement. The diagnostic profile requires all of the following:
+
+- the pinned external SDK wheel;
+- `backend=sdk`, `allow_motion=true`, and `enable_posture_service=true`;
+- `BPX_CONFIRM_PHYSICAL_POSTURE_SERVICE=I_UNDERSTAND_POSTURE_RPC_CAN_MOVE_BPX`;
+- a local operator with the physical E-stop and a clear test area.
+
+The RPC accepts only exact lowercase `stand` and `sit`. Calls are serialized,
+each response waits for fresh `MotionState` feedback, and duplicate requests
+are idempotent. Activation accepts a fresh `LyingDown(0)` or `Motion(6)` state
+without moving. Command failure during a posture transition performs a bounded
+sit-down attempt. Deactivate and shutdown disable velocity mode and disconnect
+without implicitly changing posture. The profile
+does not register `twist_in` or `move`, never enables velocity control, and
+does not construct `JointLevelControl`.
+
+## Explicit stand/yaw-circle/stop/sit hardware probe
+
+The separate `scripts/run-yaw-circle-probe.sh` wrapper is for a manually
+initiated test only. It stands from `LyingDown(0)`, enables velocity control,
+holds linear x/y at exactly zero, and sends a bounded yaw rate until the
+unwrapped LegOdom yaw reaches `2*pi` in the commanded direction. It then sends
+zero yaw, disables velocity control, flushes zero for two seconds, and sits to
+`LyingDown(0)`.
+
+Defaults are `0.5 rad/s`, a `2*pi` target, a 30-second turn timeout, and a
+0.15-metre maximum horizontal translation from the standing origin. Feedback
+more than 0.2 rad in the direction opposite to the command aborts the cycle.
+Negative yaw rate selects the other direction. The adapter hard-caps absolute
+yaw at `1.0 rad/s` even though the SDK documents a higher Walk limit.
+
+The vendor C++ example sends `1.0 rad/s` for three seconds, which is about
+3 radians rather than a full circle. This probe follows its velocity-enable,
+periodic command, zero-flush and sit ordering, but uses odometry closure to
+implement the requested full circle. It omits the example's zero-position and
+unrelated gait commands. A fake-clock regression also exercises the C++
+example's nominal `1.0 rad/s`/`3 rad` phase and locks the cross-command order,
+while retaining state-confirmed stand/sit and bounded cleanup.
+
+See the Robot repository's `YAW_CIRCLE_TEST_GUIDE.md` before manual use. The
+wrapper requires `--confirm-physical-yaw-circle`, and no package manifest
+launches it. This direct SDK test still does not create a Robonix `twist_in`
+subscriber.
 
 All state sources pass through one telemetry boundary that rejects malformed
 dimensions, non-finite values, invalid timestamps and zero-norm quaternions;
@@ -130,18 +247,20 @@ and verifies shutdown cleanup. The fake variant also publishes a non-planar
 Twist and requires the provider to reject it.
 
 For the integrated SDK runtime, supply the same pinned wheel as an external
-host artifact. The default and x86 Docker release manifests already select the
-read-only wrapper. It verifies the recorded SHA-256, mounts that one file
+host artifact. The default and x86 Docker release manifests select the guarded
+posture wrapper. It verifies the recorded SHA-256, mounts that one file
 read-only, and installs it without contacting a package index:
 
 ```bash
 export BPX_SDK_WHEEL=/absolute/path/to/bpx_sdk_open-1.0.8-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
-rbnx start -p . --set backend=sdk --set allow_motion=false
+rbnx start -p . --set backend=sdk --set allow_motion=true \
+  --set enable_posture_service=true
 ```
 
 For normal deployment, use the Robot package's
-`robonix_manifest.sdk-read-only.yaml` profile. Hardware activation remains
-bounded by `sdk_connect_timeout_s` and fails if no fresh odometry frame arrives.
+`robonix_manifest.yaml` profile. Use `robonix_manifest.sdk-read-only.yaml` when
+posture must be unavailable. Hardware activation remains bounded by
+`sdk_connect_timeout_s` and fails if no fresh odometry frame arrives.
 
 ## Robonix build and start
 
@@ -152,7 +271,8 @@ rbnx validate .
 rbnx build -p .
 export BPX_SDK_WHEEL=/absolute/path/to/the-pinned-wheel
 rbnx start -p . --config ./local-config.yaml \
-  --set backend=sdk --set allow_motion=false
+  --set backend=sdk --set allow_motion=true \
+  --set enable_posture_service=true
 ```
 
 For a fake, motion-disabled development smoke test without hardware, explicitly
@@ -183,7 +303,7 @@ bind-mounts only that wheel under `/vendor-sdk` with `:ro`. The artifact remains
 outside the repository and runtime image so the release can preserve its own
 Apache-2.0 LICENSE, NOTICE, third-party notices, checksum, and SBOM boundary.
 
-The fixed-baseline test suite currently passes all 62 package tests. The
+The fixed-baseline test suite currently passes all 102 package tests. The
 previous Atlas lifecycle smoke test used the distinct fake motion-development
 identity: it reached `ACTIVE` with Driver, `twist_in`, and `odom`; its internal
 `/joint_states` stream was consumed by ROS 2 `robot_state_publisher` to resolve
@@ -192,11 +312,10 @@ without leaving a runtime container behind.
 
 ## Development status
 
-See the workspace-level `TODO.md`. The published package identity is suitable
-only for state-read validation; it cannot arm or accept a velocity command. Do
-not promote the motion-development identity or use this adapter to command a
-real robot until the controlled-motion milestone and hardware acceptance
-checklist are complete.
+See the workspace-level `TODO.md`. The published package can read state and
+perform only explicit `stand`/`sit`; it cannot accept a velocity command. Do
+not promote the motion-development identity or use its Twist path with a real
+robot until the controlled-motion milestone and hardware checklist are complete.
 
 ## License
 

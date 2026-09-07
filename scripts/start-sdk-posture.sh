@@ -8,7 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
   exit 1
 }
 
+# Constructing MotionLevelControl does not move the robot. The provider keeps
+# velocity control disabled and exposes only the explicit stand/sit posture RPC.
 export BPX_REQUIRED_BACKEND=sdk
-export BPX_POSTURE_CAPABILITY=false
-export BPX_REQUIRED_POSTURE_CAPABILITY=false
+export BPX_POSTURE_CAPABILITY=true
+export BPX_REQUIRED_POSTURE_CAPABILITY=true
 exec bash "$SCRIPT_DIR/start.sh"

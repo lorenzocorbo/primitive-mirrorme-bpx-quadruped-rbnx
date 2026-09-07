@@ -12,6 +12,7 @@ if PACKAGE_ROOT not in sys.path:
 
 from bpx_quadruped.model import PlanarTwist, RobotState
 from bpx_quadruped.config import ProviderConfig
+from bpx_quadruped.posture_runtime import PostureRuntime
 from bpx_quadruped.runtime import ReadOnlyRuntime, build_runtime, state_is_publishable
 
 
@@ -42,6 +43,7 @@ class ReadOnlyRuntimeTest(unittest.TestCase):
         runtime = ReadOnlyRuntime(source)
 
         self.assertFalse(runtime.supports_twist)
+        self.assertFalse(runtime.supports_posture)
         runtime.activate()
         runtime.activate()
         self.assertEqual(1, source.start_count)
@@ -60,6 +62,7 @@ class ReadOnlyRuntimeTest(unittest.TestCase):
         self.assertFalse(decision.accepted)
         self.assertIn("read-only", decision.reason)
         self.assertFalse(hasattr(source, "apply"))
+        self.assertFalse(runtime.set_posture("stand").accepted)
 
     def test_tick_requires_an_active_runtime(self) -> None:
         runtime = ReadOnlyRuntime(
@@ -98,6 +101,21 @@ class RuntimeFactoryTest(unittest.TestCase):
             sdk_request_factory=lambda: object(),
         )
         self.assertIsInstance(runtime, ReadOnlyRuntime)
+        self.assertFalse(runtime.supports_twist)
+
+    def test_sdk_posture_profile_selects_single_owner_posture_runtime(self) -> None:
+        runtime = build_runtime(
+            ProviderConfig.from_mapping(
+                {
+                    "backend": "sdk",
+                    "allow_motion": True,
+                    "enable_posture_service": True,
+                }
+            ),
+            sdk_control_factory=lambda: object(),
+        )
+        self.assertIsInstance(runtime, PostureRuntime)
+        self.assertTrue(runtime.supports_posture)
         self.assertFalse(runtime.supports_twist)
 
     def test_replay_selects_the_read_only_adapter(self) -> None:

@@ -12,5 +12,5 @@ existing_label="$(docker inspect --format "{{ index .Config.Labels \"$LABEL_KEY\
   exit 1
 }
 
-docker stop --time 5 "$CONTAINER" >/dev/null 2>&1 || true
+docker stop --time "${BPX_RBNX_STOP_TIMEOUT_S:-30}" "$CONTAINER" >/dev/null 2>&1 || true
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
