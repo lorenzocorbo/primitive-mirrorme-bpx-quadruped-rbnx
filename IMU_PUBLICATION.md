@@ -1,4 +1,4 @@
-# 可选 ROS IMU 数据面（原 TODO M3）
+# 可选 ROS IMU 数据面
 
 Provider 支持内部 `sensor_msgs/Imu` 发布，不新增 Atlas capability，也不修改控制命令。
 默认关闭。在使用当前源码的 Primitive config 中显式配置：

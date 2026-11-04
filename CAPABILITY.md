@@ -2,7 +2,7 @@
 description: MirrorMe BPX unified odometry, stand/sit, bounded move and velocity control.
 ---
 
-# MirrorMe BPX Quadruped — dev.3
+# MirrorMe BPX Quadruped — dev.4
 
 Default/x86 manifests expose `robonix/primitive/quadruped/{odom,posture,move,twist_in}`
 through one SDK MotionLevelControl owner. Posture accepts exact `stand`/`sit` only.
